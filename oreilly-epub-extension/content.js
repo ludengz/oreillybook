@@ -42,6 +42,7 @@
   }
 
   async function startDownload() {
+    if (abortController) return; // Already downloading
     const isbn = Fetcher.extractIsbn(window.location.href);
     if (!isbn) return;
 
@@ -73,7 +74,7 @@
         console.warn(`Large book detected: ${chapterFiles.length} chapters. This may take a while.`);
       }
 
-      await buildEpub(zip, isbn, chapterFiles, cssFiles, signal);
+      await buildEpub(zip, isbn, chapterFiles, cssFiles, imageFiles.length, signal);
 
     } catch (err) {
       if (err.name === 'AbortError') {
@@ -92,7 +93,7 @@
     }
   }
 
-  async function buildEpub(zip, isbn, chapterFiles, cssFiles, signal) {
+  async function buildEpub(zip, isbn, chapterFiles, cssFiles, totalImages, signal) {
     const totalChapters = chapterFiles.length;
 
     zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
@@ -162,7 +163,7 @@
         const chapterImageMap = {};
         for (const imgSrc of imgUrls) {
           const absoluteUrl = new URL(imgSrc, chapterPath).href;
-          const imgFilename = imgSrc.split('/').pop();
+          const imgFilename = `ch${String(chapterNum).padStart(2, '0')}_${imgSrc.split('/').pop()}`;
           if (!imageMap[imgSrc]) {
             try {
               const imgRes = await Fetcher._fetchWithRetry(absoluteUrl, { signal });
@@ -183,7 +184,7 @@
           chapter: completedChapters,
           totalChapters,
           images: Object.keys(imageMap).length,
-          totalImages: 0,
+          totalImages,
         });
       }
     }
@@ -223,7 +224,7 @@
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
 
     zipInstance = null;
     chrome.runtime.sendMessage({ action: 'downloadComplete' });

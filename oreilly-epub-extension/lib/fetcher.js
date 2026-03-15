@@ -7,10 +7,14 @@ const Fetcher = {
   async _fetchWithRetry(url, { signal, maxRetries = 3 } = {}) {
     const delays = [1000, 3000, 9000];
     let attempt = 0;
+    let rateLimitRetries = 0;
+    const maxRateLimitRetries = 5;
     while (attempt <= maxRetries) {
       try {
         const response = await fetch(url, { signal, credentials: 'include' });
         if (response.status === 429) {
+          rateLimitRetries++;
+          if (rateLimitRetries > maxRateLimitRetries) throw new Error('Rate limit exceeded');
           const retryAfter = response.headers.get('Retry-After');
           const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 10000;
           await new Promise(r => setTimeout(r, waitMs));
@@ -21,6 +25,7 @@ const Fetcher = {
         return response;
       } catch (err) {
         if (err.name === 'AbortError' || err.message === 'SESSION_EXPIRED') throw err;
+        if (err.message === 'Rate limit exceeded') throw err;
         if (attempt === maxRetries) throw err;
         await new Promise(r => setTimeout(r, delays[attempt]));
         attempt++;
