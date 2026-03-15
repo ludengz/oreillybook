@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>O'Reilly EPUB Extension Tests</title>
+  <style>
+    body { font-family: monospace; padding: 20px; }
+    .pass { color: green; }
+    .fail { color: red; font-weight: bold; }
+    .suite { margin: 16px 0 4px; font-weight: bold; font-size: 14px; }
+    .result { margin-left: 16px; }
+    #summary { margin-top: 20px; font-size: 16px; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Test Runner</h1>
+  <div id="output"></div>
+  <div id="summary">Running...</div>
+
+  <!-- Load modules under test -->
+  <script src="../lib/epub-builder.js"></script>
+  <script src="../lib/eink-optimizer.js"></script>
+  <script src="../lib/fetcher.js"></script>
+
+  <!-- Async test framework -->
+  <script>
+    const output = document.getElementById('output');
+    const summaryEl = document.getElementById('summary');
+    let passed = 0, failed = 0;
+    const suites = [];
+    let currentTests = null;
+
+    function describe(name, fn) {
+      currentTests = [];
+      suites.push({ name, tests: currentTests });
+      fn();
+    }
+
+    function it(name, fn) {
+      currentTests.push({ name, fn });
+    }
+
+    function assert(condition, msg) {
+      if (!condition) throw new Error(msg || 'Assertion failed');
+    }
+
+    function assertEqual(actual, expected, msg) {
+      if (actual !== expected) {
+        throw new Error(msg || `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+      }
+    }
+
+    function assertContains(str, substr, msg) {
+      if (typeof str !== 'string' || !str.includes(substr)) {
+        throw new Error(msg || `Expected string to contain "${substr}"`);
+      }
+    }
+  </script>
+
+  <!-- Load test files -->
+  <script src="epub-builder.test.js"></script>
+  <script src="eink-optimizer.test.js"></script>
+  <script src="fetcher.test.js"></script>
+
+  <!-- Run all tests (async) -->
+  <script>
+    (async function runTests() {
+      for (const suite of suites) {
+        const div = document.createElement('div');
+        div.className = 'suite';
+        div.textContent = suite.name;
+        output.appendChild(div);
+
+        for (const test of suite.tests) {
+          const res = document.createElement('div');
+          res.className = 'result';
+          try {
+            await test.fn();
+            res.className += ' pass';
+            res.textContent = `✓ ${test.name}`;
+            passed++;
+          } catch (e) {
+            res.className += ' fail';
+            res.textContent = `✗ ${test.name}: ${e.message}`;
+            failed++;
+          }
+          output.appendChild(res);
+        }
+      }
+      summaryEl.textContent = `${passed} passed, ${failed} failed`;
+      summaryEl.style.background = failed ? '#fee' : '#efe';
+      summaryEl.style.color = failed ? 'red' : 'green';
+    })();
+  </script>
+</body>
+</html>
