@@ -12,11 +12,13 @@ const Fetcher = {
     while (attempt <= maxRetries) {
       try {
         const response = await fetch(url, { signal, credentials: 'include' });
-        if (response.status === 429) {
+        if (response.status === 429 || response.status === 403) {
           rateLimitRetries++;
           if (rateLimitRetries > maxRateLimitRetries) throw new Error('Rate limit exceeded');
           const retryAfter = response.headers.get('Retry-After');
-          const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 10000;
+          const baseWait = response.status === 403 ? 3000 : 10000;
+          const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : baseWait * rateLimitRetries;
+          console.log(`Rate limited (${response.status}), waiting ${waitMs}ms before retry ${rateLimitRetries}/${maxRateLimitRetries}`);
           await new Promise(r => setTimeout(r, waitMs));
           continue;
         }

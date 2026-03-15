@@ -68,9 +68,13 @@ All API endpoints are on the same domain as the book content: `learning.oreilly.
 
 ### Book Metadata
 
-1. Extract ISBN from current page URL: `/library/view/{title}/{ISBN}/...`
-2. Call `GET /api/v2/epubs/urn:orm:book:{ISBN}/files` to get complete file manifest
-3. Categorize returned files: XHTML chapters, CSS stylesheets, image assets
+1. Extract ISBN from current page URL: `/library/view/{title}/{ISBN}/...` or `/library/cover/{title}/{ISBN}/...`
+2. Fetch book title and authors via the search API: `GET /api/v2/search/?query={ISBN}&limit=1` — returns `title` and `authors` (string array)
+   - **Why not DOM selectors:** O'Reilly is a React SPA — DOM elements are rendered asynchronously after page load, so CSS selectors for title/author elements are unreliable from a content script
+   - **Why not `/api/v2/epubs/` endpoint:** The epubs API returns file manifests but does not include `authors` field
+   - **Fallback for title:** Parse `document.title` which has format `"ChapterTitle | BookTitle"` — take the last segment after splitting on ` | `
+3. Call `GET /api/v2/epubs/urn:orm:book:{ISBN}/files/?limit=200` to get complete file manifest (paginated)
+4. Categorize returned files: XHTML chapters, CSS stylesheets, image assets
 
 ### Chapter Fetching Strategy
 
@@ -94,7 +98,7 @@ All API endpoints are on the same domain as the book content: `learning.oreilly.
 ### Error Handling
 
 - **Retry logic:** Auto-retry failed chapter fetches with exponential backoff (3 retries: 1s, 3s, 9s delays)
-- **429 Rate Limit:** On 429 response, read `Retry-After` header; if absent, use exponential backoff starting at 10s. Pause all fetches until the backoff period expires, then resume.
+- **403/429 Rate Limit:** On 403 or 429 response, read `Retry-After` header; if absent, use progressive backoff (403: starting at 3s, 429: starting at 10s, multiplied by retry count). Max 5 rate-limit retries per request before failing.
 - **Permanent failure:** Skip chapter after all retries exhausted, insert placeholder page in EPUB noting the missing chapter
 - **401 Session expired:** Abort all fetches, show browser notification prompting user to re-login on O'Reilly, reset extension state
 
@@ -210,9 +214,9 @@ oreilly-epub-extension/
 ├── styles/
 │   └── eink-override.css         # Injected into EPUB
 └── icons/
-    ├── 16.png
-    ├── 48.png
-    └── 128.png
+    ├── icon16.png
+    ├── icon48.png
+    └── icon128.png
 ```
 
 ### Manifest V3
@@ -223,7 +227,7 @@ oreilly-epub-extension/
   "name": "O'Reilly EPUB Exporter",
   "version": "1.0.0",
   "description": "One-click O'Reilly book to EPUB conversion for e-ink readers",
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "notifications"],
   "host_permissions": ["https://learning.oreilly.com/*"],
   "background": {
     "service_worker": "background.js"
@@ -231,9 +235,9 @@ oreilly-epub-extension/
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icons/16.png",
-      "48": "icons/48.png",
-      "128": "icons/128.png"
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
     }
   },
   "content_scripts": [{
@@ -248,6 +252,10 @@ oreilly-epub-extension/
       "lib/eink-optimizer.js",
       "content.js"
     ]
+  }],
+  "web_accessible_resources": [{
+    "resources": ["styles/eink-override.css"],
+    "matches": ["https://learning.oreilly.com/*"]
   }]
 }
 ```

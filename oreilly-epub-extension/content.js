@@ -4,22 +4,41 @@
   let abortController = null;
   let zipInstance = null;
 
+  // Extract book title from document.title which has format "ChapterTitle | BookTitle"
+  function extractBookTitle() {
+    const parts = document.title.split(' | ');
+    return parts.length > 1 ? parts[parts.length - 1].trim() : document.title.trim();
+  }
+
+  // Fetch book metadata (title, authors) from O'Reilly API
+  async function fetchBookMetadata(isbn) {
+    try {
+      const res = await fetch(`/api/v2/search/?query=${isbn}&limit=1`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        const book = data.results?.[0];
+        if (book) {
+          return {
+            title: book.title || extractBookTitle(),
+            authors: book.authors?.length ? book.authors : null,
+          };
+        }
+      }
+    } catch (e) { console.warn('Metadata fetch failed:', e); }
+    return { title: extractBookTitle(), authors: null };
+  }
+
   // Detect book on page load
-  function detectBook() {
+  async function detectBook() {
     const isbn = Fetcher.extractIsbn(window.location.href);
     if (!isbn) return;
 
-    const titleEl = document.querySelector('h1, [data-testid="book-title"], .t-title');
-    const title = titleEl ? titleEl.textContent.trim() : document.title;
-
-    const authorEls = document.querySelectorAll('[data-testid="author-name"], .author-name, .t-authors a');
-    const authors = authorEls.length > 0
-      ? Array.from(authorEls).map(el => el.textContent.trim())
-      : ['Unknown Author'];
+    const meta = await fetchBookMetadata(isbn);
+    const authors = meta.authors || ['Unknown Author'];
 
     chrome.runtime.sendMessage({
       action: 'bookDetected',
-      bookInfo: { isbn, title, authors },
+      bookInfo: { isbn, title: meta.title, authors },
     });
   }
 
@@ -52,29 +71,50 @@
     const zip = zipInstance;
 
     try {
-      const filesRes = await fetch(`/api/v2/epubs/urn:orm:book:${isbn}/files`, {
-        credentials: 'include', signal,
-      });
-      if (!filesRes.ok) throw new Error(`Manifest fetch failed: ${filesRes.status}`);
-      const filesData = await filesRes.json();
+      // Fetch all pages of the file manifest (API is paginated, ~20 per page)
+      const allFiles = [];
+      let nextUrl = `/api/v2/epubs/urn:orm:book:${isbn}/files/?limit=200`;
+      while (nextUrl) {
+        const filesRes = await fetch(nextUrl, { credentials: 'include', signal });
+        if (!filesRes.ok) throw new Error(`Manifest fetch failed: ${filesRes.status}`);
+        const filesData = await filesRes.json();
+        const results = filesData.results || filesData;
+        allFiles.push(...(Array.isArray(results) ? results : []));
+        // Follow pagination; convert absolute URL to relative path
+        if (filesData.next) {
+          const u = new URL(filesData.next);
+          nextUrl = u.pathname + u.search;
+        } else {
+          nextUrl = null;
+        }
+      }
+      console.log(`Manifest loaded: ${allFiles.length} files total`);
 
-      const files = filesData.results || filesData;
       const chapterFiles = [];
       const cssFiles = [];
       const imageFiles = [];
 
-      for (const file of files) {
-        const path = typeof file === 'string' ? file : (file.url || file.full_path || '');
-        if (path.match(/\.xhtml$/i)) chapterFiles.push(path);
-        else if (path.match(/\.css$/i)) cssFiles.push(path);
-        else if (path.match(/\.(png|jpe?g|gif|svg|webp)$/i)) imageFiles.push(path);
+      for (const file of allFiles) {
+        const path = file.full_path || file.filename || '';
+        const kind = file.kind || '';
+        const mediaType = file.media_type || '';
+        const contentUrl = `/api/v2/epubs/urn:orm:book:${isbn}/files/${path}`;
+
+        if (kind === 'chapter' || mediaType === 'text/html' || mediaType === 'application/xhtml+xml') {
+          chapterFiles.push({ path, url: contentUrl });
+        } else if (mediaType === 'text/css' || path.match(/\.css$/i)) {
+          cssFiles.push({ path, url: contentUrl });
+        } else if (mediaType.startsWith('image/') || path.match(/\.(png|jpe?g|gif|svg|webp)$/i)) {
+          imageFiles.push({ path, url: contentUrl });
+        }
       }
 
+      console.log(`Found: ${chapterFiles.length} chapters, ${cssFiles.length} CSS, ${imageFiles.length} images`);
       if (chapterFiles.length > 100) {
         console.warn(`Large book detected: ${chapterFiles.length} chapters. This may take a while.`);
       }
 
-      await buildEpub(zip, isbn, chapterFiles, cssFiles, imageFiles.length, signal);
+      await buildEpub(zip, isbn, chapterFiles, cssFiles, imageFiles, signal);
 
     } catch (err) {
       if (err.name === 'AbortError') {
@@ -93,8 +133,9 @@
     }
   }
 
-  async function buildEpub(zip, isbn, chapterFiles, cssFiles, totalImages, signal) {
+  async function buildEpub(zip, isbn, chapterFiles, cssFiles, imageFiles, signal) {
     const totalChapters = chapterFiles.length;
+    const totalImages = imageFiles.length;
 
     zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
     zip.file('META-INF/container.xml', EpubBuilder.generateContainer());
@@ -103,38 +144,41 @@
     zip.file('OEBPS/Styles/eink-override.css', await einkRes.text());
 
     const cssFilenames = [];
-    for (const cssPath of cssFiles) {
+    for (const cssFile of cssFiles) {
       try {
-        const res = await Fetcher._fetchWithRetry(cssPath, { signal });
-        const filename = cssPath.split('/').pop();
+        const res = await Fetcher._fetchWithRetry(cssFile.url, { signal });
+        const filename = cssFile.path.split('/').pop();
         cssFilenames.push(filename);
         zip.file(`OEBPS/Styles/${filename}`, await res.text());
-      } catch (e) { console.warn(`CSS fetch failed: ${cssPath}`, e); }
+      } catch (e) { console.warn(`CSS fetch failed: ${cssFile.path}`, e); }
     }
 
     const chapters = [];
     const imageMap = {};
     let completedChapters = 0;
 
-    for (let i = 0; i < chapterFiles.length; i += 5) {
+    for (let i = 0; i < chapterFiles.length; i += 2) {
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-      const batch = chapterFiles.slice(i, i + 5);
+      // Throttle: wait 1s between batches to avoid 403 rate limiting
+      if (i > 0) await new Promise(r => setTimeout(r, 1000));
+
+      const batch = chapterFiles.slice(i, i + 2);
       const batchContents = await Promise.all(
-        batch.map(async (url) => {
+        batch.map(async (chapterFile) => {
           try {
-            const res = await Fetcher._fetchWithRetry(url, { signal });
+            const res = await Fetcher._fetchWithRetry(chapterFile.url, { signal });
             return await res.text();
           } catch (err) {
             if (err.name === 'AbortError' || err.message === 'SESSION_EXPIRED') throw err;
-            console.warn(`Chapter fetch failed: ${url}`, err);
+            console.warn(`Chapter fetch failed: ${chapterFile.path}`, err);
             return null;
           }
         })
       );
 
       for (let j = 0; j < batch.length; j++) {
-        const chapterPath = batch[j];
+        const chapterPath = batch[j].url;
         const chapterNum = i + j + 1;
         const filename = `chapter_${String(chapterNum).padStart(2, '0')}.xhtml`;
 
@@ -162,7 +206,7 @@
         const imgUrls = Fetcher.extractImageUrls(xhtml);
         const chapterImageMap = {};
         for (const imgSrc of imgUrls) {
-          const absoluteUrl = new URL(imgSrc, chapterPath).href;
+          const absoluteUrl = new URL(imgSrc, window.location.origin + chapterPath).href;
           const imgFilename = `ch${String(chapterNum).padStart(2, '0')}_${imgSrc.split('/').pop()}`;
           if (!imageMap[imgSrc]) {
             try {
@@ -189,12 +233,9 @@
       }
     }
 
-    const pageTitleEl = document.querySelector('h1, [data-testid="book-title"]');
-    const bookTitle = pageTitleEl ? pageTitleEl.textContent.trim() : document.title;
-    const authorEls = document.querySelectorAll('[data-testid="author-name"], .author-name');
-    const authors = authorEls.length > 0
-      ? Array.from(authorEls).map(el => el.textContent.trim())
-      : ['Unknown Author'];
+    const meta = await fetchBookMetadata(isbn);
+    const bookTitle = meta.title;
+    const authors = meta.authors || ['Unknown Author'];
 
     const metadata = {
       title: bookTitle, authors, isbn,
