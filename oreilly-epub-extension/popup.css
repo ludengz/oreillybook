@@ -1,0 +1,22 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 300px; font-family: system-ui, -apple-system, sans-serif; font-size: 13px; color: #333; }
+.header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
+.logo { width: 28px; height: 28px; background: #d44; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 14px; }
+.title { font-weight: 600; font-size: 14px; }
+.state { padding: 0 16px 16px; }
+.book-info { background: #f7f7f7; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
+.book-title { font-weight: 600; font-size: 13px; color: #222; margin-bottom: 2px; }
+.book-title-small { font-weight: 600; font-size: 13px; color: #222; margin-bottom: 6px; }
+.book-authors { font-size: 11px; color: #888; }
+.btn-primary { width: 100%; background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 10px; font-weight: 600; font-size: 13px; cursor: pointer; }
+.btn-primary:hover { background: #1d4ed8; }
+.btn-secondary { width: 100%; background: #f3f4f6; color: #666; border: 1px solid #ddd; border-radius: 6px; padding: 10px; font-weight: 600; font-size: 13px; cursor: pointer; }
+.btn-secondary:hover { background: #e5e7eb; }
+.progress-bar { background: #e0e0e0; border-radius: 4px; height: 8px; margin-bottom: 4px; }
+.progress-fill { background: #2563eb; border-radius: 4px; height: 8px; width: 0%; transition: width 0.3s ease; }
+.progress-text { font-size: 11px; color: #888; }
+.notice { background: #fef3c7; border-radius: 6px; padding: 12px; text-align: center; }
+.notice.error { background: #fee; }
+.notice-icon { font-size: 20px; margin-bottom: 4px; }
+.notice-text { font-size: 13px; color: #92400e; }
+.notice.error .notice-text { color: #dc2626; }

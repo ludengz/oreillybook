@@ -5,6 +5,42 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
+  <div class="header">
+    <div class="logo">O</div>
+    <span class="title">O'Reilly → EPUB</span>
+  </div>
+
+  <div id="state-not-oreilly" class="state" style="display:none;">
+    <div class="notice">
+      <div class="notice-icon">📖</div>
+      <div class="notice-text">Navigate to an O'Reilly book page to get started</div>
+    </div>
+  </div>
+
+  <div id="state-ready" class="state" style="display:none;">
+    <div class="book-info">
+      <div id="book-title" class="book-title"></div>
+      <div id="book-authors" class="book-authors"></div>
+    </div>
+    <button id="btn-download" class="btn-primary">📥 Download EPUB</button>
+  </div>
+
+  <div id="state-downloading" class="state" style="display:none;">
+    <div class="book-info">
+      <div class="book-title-small">Downloading...</div>
+      <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+      <div id="progress-text" class="progress-text"></div>
+    </div>
+    <button id="btn-cancel" class="btn-secondary">Cancel</button>
+  </div>
+
+  <div id="state-error" class="state" style="display:none;">
+    <div class="notice error">
+      <div class="notice-text" id="error-text"></div>
+    </div>
+    <button id="btn-retry" class="btn-primary">Retry</button>
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
