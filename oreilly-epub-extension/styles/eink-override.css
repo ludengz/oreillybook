@@ -1,0 +1,39 @@
+/* E-Ink Override — injected into EPUB for e-ink optimization */
+body {
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.7;
+  margin: 1.5em;
+  color: #000;
+}
+
+pre, code {
+  font-family: "Courier New", Courier, monospace;
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+  line-height: 1.5;
+}
+
+pre { padding: 0.8em; white-space: pre-wrap; word-wrap: break-word; }
+code { padding: 0.1em 0.3em; }
+
+/* Reset all syntax colors */
+pre span, code span, [class*="hljs-"], [class*="token"] {
+  color: #000 !important;
+  background: transparent !important;
+}
+
+/* Keywords → bold */
+.keyword, .hljs-keyword, .hljs-built_in, .hljs-type,
+.token.keyword, .token.builtin { font-weight: bold !important; }
+
+/* Strings → italic */
+.string, .hljs-string, .hljs-regexp,
+.token.string, .token.regex { font-style: italic !important; }
+
+/* Comments → italic gray */
+.comment, .hljs-comment, .hljs-meta,
+.token.comment { font-style: italic !important; color: #666 !important; }
+
+/* Functions → bold underline */
+.function, .hljs-title, .hljs-function,
+.token.function { font-weight: bold !important; text-decoration: underline !important; }
