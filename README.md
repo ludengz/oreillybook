@@ -71,6 +71,6 @@ oreilly-epub-extension/
 
 See the full design spec at [`docs/superpowers/specs/2026-03-15-oreilly-epub-chrome-extension-design.md`](docs/superpowers/specs/2026-03-15-oreilly-epub-chrome-extension-design.md).
 
-## License
+## Disclaimer
 
-This project is for personal use only. It relies on the user's legitimate O'Reilly subscription for content access.
+This extension requires an active O'Reilly Learning subscription. Downloaded EPUB files are **strictly for personal use only** — they must not be redistributed, shared, or used for any commercial purpose. Users are responsible for complying with O'Reilly's [Terms of Service](https://www.oreilly.com/terms/) and applicable copyright laws. This project is not affiliated with or endorsed by O'Reilly Media.
