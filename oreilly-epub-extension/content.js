@@ -60,6 +60,54 @@
     zipInstance = null;
   }
 
+  // Normalize a path for matching: resolve relative segments and strip leading slashes
+  function normalizePath(path) {
+    const parts = path.replace(/^\/+/, '').split('/');
+    const resolved = [];
+    for (const part of parts) {
+      if (part === '..') resolved.pop();
+      else if (part !== '.' && part !== '') resolved.push(part);
+    }
+    return resolved.join('/');
+  }
+
+  // Resolve an image src from chapter HTML against the chapter's original path in the EPUB
+  function resolveImagePath(imgSrc, chapterOriginalPath) {
+    // Strip query parameters and hash fragments for path resolution
+    const cleanSrc = Fetcher.stripQueryAndHash(imgSrc);
+    // Absolute URL — return as-is
+    if (cleanSrc.startsWith('http://') || cleanSrc.startsWith('https://')) {
+      return { resolved: cleanSrc, isAbsolute: true };
+    }
+    // Resolve relative to the chapter's directory in the EPUB structure
+    const chapterDir = chapterOriginalPath.substring(0, chapterOriginalPath.lastIndexOf('/'));
+    const combined = chapterDir + '/' + cleanSrc;
+    return { resolved: normalizePath(combined), isAbsolute: false };
+  }
+
+  // Fetch image via background service worker (CORS proxy)
+  async function fetchImageViaBackground(url) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: 'fetchImage', url }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response || !response.ok) {
+          reject(new Error(response?.error || 'Background fetch failed'));
+          return;
+        }
+        // Decode base64 back to ArrayBuffer
+        const binary = atob(response.data);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        resolve(bytes.buffer);
+      });
+    });
+  }
+
   async function startDownload() {
     if (abortController) return; // Already downloading
     const isbn = Fetcher.extractIsbn(window.location.href);
@@ -105,7 +153,7 @@
         } else if (mediaType === 'text/css' || path.match(/\.css$/i)) {
           cssFiles.push({ path, url: contentUrl });
         } else if (mediaType.startsWith('image/') || path.match(/\.(png|jpe?g|gif|svg|webp)$/i)) {
-          imageFiles.push({ path, url: contentUrl });
+          imageFiles.push({ path, url: contentUrl, mediaType });
         }
       }
 
@@ -135,7 +183,6 @@
 
   async function buildEpub(zip, isbn, chapterFiles, cssFiles, imageFiles, signal) {
     const totalChapters = chapterFiles.length;
-    const totalImages = imageFiles.length;
 
     zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
     zip.file('META-INF/container.xml', EpubBuilder.generateContainer());
@@ -143,18 +190,95 @@
     const einkRes = await fetch(chrome.runtime.getURL('styles/eink-override.css'));
     zip.file('OEBPS/Styles/eink-override.css', await einkRes.text());
 
+    // Track filenames to avoid collisions (different dirs, same filename)
+    const usedFilenames = new Set();
+    function uniqueFilename(basename) {
+      let name = basename;
+      let counter = 1;
+      while (usedFilenames.has(name)) {
+        const dot = basename.lastIndexOf('.');
+        const stem = dot > 0 ? basename.substring(0, dot) : basename;
+        const ext = dot > 0 ? basename.substring(dot) : '';
+        name = `${stem}_${counter}${ext}`;
+        counter++;
+      }
+      usedFilenames.add(name);
+      return name;
+    }
+
     const cssFilenames = [];
+    const cssImageMap = {}; // tracks CSS background images: original url -> zip filename
     for (const cssFile of cssFiles) {
       try {
         const res = await Fetcher._fetchWithRetry(cssFile.url, { signal });
+        let cssText = await res.text();
         const filename = cssFile.path.split('/').pop();
         cssFilenames.push(filename);
-        zip.file(`OEBPS/Styles/${filename}`, await res.text());
+
+        // Extract and download background images referenced in CSS
+        const cssImgUrls = Fetcher.extractCssImageUrls(cssText);
+        for (const cssImgUrl of cssImgUrls) {
+          if (cssImageMap[cssImgUrl]) continue; // Already downloaded
+          const cleanUrl = Fetcher.stripQueryAndHash(cssImgUrl);
+          const cssDir = cssFile.path.substring(0, cssFile.path.lastIndexOf('/'));
+          const resolvedPath = normalizePath(cssDir + '/' + cleanUrl);
+          const imgName = uniqueFilename(Fetcher.stripQueryAndHash(cleanUrl.split('/').pop()));
+          const apiUrl = `/api/v2/epubs/urn:orm:book:${isbn}/files/${Fetcher.stripQueryAndHash(resolvedPath)}`;
+          try {
+            const imgRes = await Fetcher._fetchWithRetry(apiUrl, { signal });
+            zip.file(`OEBPS/Images/${imgName}`, await imgRes.arrayBuffer());
+            cssImageMap[cssImgUrl] = imgName;
+          } catch (e) {
+            console.warn(`CSS background image fetch failed: ${cssImgUrl}`, e);
+          }
+        }
+
+        // Rewrite CSS url() paths to point to ../Images/
+        for (const [original, newName] of Object.entries(cssImageMap)) {
+          cssText = cssText.split(original).join(`../Images/${newName}`);
+        }
+
+        zip.file(`OEBPS/Styles/${filename}`, cssText);
       } catch (e) { console.warn(`CSS fetch failed: ${cssFile.path}`, e); }
     }
 
+    // --- Phase 1: Pre-download all manifest images via API (same-origin, no CORS) ---
+    const manifestImageMap = {}; // normalized path -> ZIP filename
+    const imageMap = {};         // original src -> ZIP filename (for path rewriting)
+    let downloadedImageCount = 0;
+
+    console.log(`Pre-downloading ${imageFiles.length} images from manifest...`);
+    for (let i = 0; i < imageFiles.length; i += 2) {
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (i > 0) await new Promise(r => setTimeout(r, 500));
+
+      const batch = imageFiles.slice(i, i + 2);
+      await Promise.all(batch.map(async (imgFile) => {
+        const normalizedPath = normalizePath(imgFile.path);
+        const rawFilename = Fetcher.stripQueryAndHash(normalizedPath.split('/').pop());
+        const imgFilename = uniqueFilename(rawFilename);
+        try {
+          const res = await Fetcher._fetchWithRetry(imgFile.url, { signal });
+          zip.file(`OEBPS/Images/${imgFilename}`, await res.arrayBuffer());
+          manifestImageMap[normalizedPath] = imgFilename;
+          downloadedImageCount++;
+        } catch (e) {
+          console.warn(`Manifest image fetch failed: ${imgFile.path}`, e);
+        }
+      }));
+
+      chrome.runtime.sendMessage({
+        action: 'progress',
+        chapter: 0,
+        totalChapters,
+        images: downloadedImageCount,
+        totalImages: imageFiles.length,
+      });
+    }
+    console.log(`Pre-downloaded ${downloadedImageCount}/${imageFiles.length} manifest images`);
+
+    // --- Phase 2: Process chapters and handle inline images ---
     const chapters = [];
-    const imageMap = {};
     let completedChapters = 0;
 
     for (let i = 0; i < chapterFiles.length; i += 2) {
@@ -178,15 +302,16 @@
       );
 
       for (let j = 0; j < batch.length; j++) {
-        const chapterPath = batch[j].url;
+        const chapterOriginalPath = batch[j].path;
         const chapterNum = i + j + 1;
         const filename = `chapter_${String(chapterNum).padStart(2, '0')}.xhtml`;
 
         let xhtml = batchContents[j];
         if (xhtml === null) {
           const placeholder = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>Chapter ${chapterNum}</title></head>
+<head><meta charset="utf-8"/><title>Chapter ${chapterNum}</title></head>
 <body><p><em>Chapter ${chapterNum} could not be downloaded.</em></p></body>
 </html>`;
           zip.file(`OEBPS/Text/${filename}`, placeholder);
@@ -195,27 +320,78 @@
           continue;
         }
 
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xhtml, 'application/xhtml+xml');
+        const doc = Fetcher.parseXhtml(xhtml);
         const h1 = doc.querySelector('h1');
         const titleEl = doc.querySelector('title');
         const chapterTitle = h1 ? h1.textContent.trim()
           : titleEl ? titleEl.textContent.trim()
           : `Chapter ${chapterNum}`;
 
+        // Extract image URLs from chapter HTML
         const imgUrls = Fetcher.extractImageUrls(xhtml);
         const chapterImageMap = {};
+
         for (const imgSrc of imgUrls) {
-          const absoluteUrl = new URL(imgSrc, window.location.origin + chapterPath).href;
-          const imgFilename = `ch${String(chapterNum).padStart(2, '0')}_${imgSrc.split('/').pop()}`;
-          if (!imageMap[imgSrc]) {
+          // Skip if already resolved in a previous chapter
+          if (imageMap[imgSrc]) {
+            chapterImageMap[imgSrc] = imageMap[imgSrc];
+            continue;
+          }
+
+          const { resolved, isAbsolute } = resolveImagePath(imgSrc, chapterOriginalPath);
+          const normalizedResolved = normalizePath(resolved);
+
+          // Strategy 1: Match against pre-downloaded manifest images
+          if (manifestImageMap[normalizedResolved]) {
+            imageMap[imgSrc] = manifestImageMap[normalizedResolved];
+            chapterImageMap[imgSrc] = imageMap[imgSrc];
+            continue;
+          }
+
+          // Strategy 2: Match by filename against manifest (fallback for path differences)
+          const srcFilename = imgSrc.split('/').pop().split('?')[0];
+          const manifestMatch = Object.entries(manifestImageMap).find(
+            ([path]) => path.split('/').pop() === srcFilename
+          );
+          if (manifestMatch) {
+            imageMap[imgSrc] = manifestMatch[1];
+            chapterImageMap[imgSrc] = imageMap[imgSrc];
+            continue;
+          }
+
+          // Strategy 3: Fetch via O'Reilly API path (same-origin, relative URLs only)
+          const cleanFilename = Fetcher.stripQueryAndHash(srcFilename);
+          const imgFilename = uniqueFilename(`ch${String(chapterNum).padStart(2, '0')}_${cleanFilename}`);
+          if (!isAbsolute) {
+            const cleanResolved = Fetcher.stripQueryAndHash(normalizedResolved);
+            const apiUrl = `/api/v2/epubs/urn:orm:book:${isbn}/files/${cleanResolved}`;
             try {
-              const imgRes = await Fetcher._fetchWithRetry(absoluteUrl, { signal });
+              const imgRes = await Fetcher._fetchWithRetry(apiUrl, { signal });
               zip.file(`OEBPS/Images/${imgFilename}`, await imgRes.arrayBuffer());
               imageMap[imgSrc] = imgFilename;
-            } catch (e) { console.warn(`Image fetch failed: ${absoluteUrl}`, e); }
+              chapterImageMap[imgSrc] = imgFilename;
+              downloadedImageCount++;
+              continue;
+            } catch (e) {
+              console.warn(`API image fetch failed: ${apiUrl}`, e);
+            }
           }
-          chapterImageMap[imgSrc] = imageMap[imgSrc] || imgFilename;
+
+          // Strategy 4: Fetch absolute URL via background SW (CORS proxy)
+          // Only for absolute URLs — relative paths that failed Strategy 3 cannot be fetched this way
+          if (isAbsolute) {
+            try {
+              const buffer = await fetchImageViaBackground(resolved);
+              zip.file(`OEBPS/Images/${imgFilename}`, buffer);
+              imageMap[imgSrc] = imgFilename;
+              chapterImageMap[imgSrc] = imgFilename;
+              downloadedImageCount++;
+            } catch (e) {
+              console.warn(`Image fetch failed (all strategies): ${imgSrc}`, e);
+            }
+          } else {
+            console.warn(`Image not found in manifest or API: ${imgSrc}`);
+          }
         }
 
         xhtml = EinkOptimizer.processChapter(xhtml, chapterImageMap);
@@ -227,8 +403,8 @@
           action: 'progress',
           chapter: completedChapters,
           totalChapters,
-          images: Object.keys(imageMap).length,
-          totalImages,
+          images: downloadedImageCount,
+          totalImages: imageFiles.length,
         });
       }
     }

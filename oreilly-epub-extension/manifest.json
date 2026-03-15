@@ -3,8 +3,12 @@
   "name": "O'Reilly EPUB Exporter",
   "version": "1.0.0",
   "description": "One-click O'Reilly book to EPUB conversion for e-ink readers",
-  "permissions": ["activeTab", "notifications"],
-  "host_permissions": ["https://learning.oreilly.com/*"],
+  "permissions": ["activeTab", "notifications", "storage"],
+  "host_permissions": [
+    "https://learning.oreilly.com/*",
+    "https://*.oreillystatic.com/*",
+    "https://*.safaribooksonline.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -23,8 +27,8 @@
     ],
     "js": [
       "lib/jszip.min.js",
-      "lib/epub-builder.js",
       "lib/fetcher.js",
+      "lib/epub-builder.js",
       "lib/eink-optimizer.js",
       "content.js"
     ]

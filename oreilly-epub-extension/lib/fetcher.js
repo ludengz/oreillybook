@@ -58,10 +58,70 @@ const Fetcher = {
     return results;
   },
 
-  extractImageUrls(xhtml) {
+  // Parse XHTML to DOM, with fallback to text/html for malformed content
+  parseXhtml(xhtml) {
     const parser = new DOMParser();
-    const doc = parser.parseFromString(xhtml, 'application/xhtml+xml');
-    const imgs = doc.querySelectorAll('img[src]');
-    return Array.from(imgs).map(img => img.getAttribute('src'));
+    let doc = parser.parseFromString(xhtml, 'application/xhtml+xml');
+    // If XHTML parsing fails, DOMParser returns an error document
+    if (doc.querySelector('parsererror')) {
+      doc = parser.parseFromString(xhtml, 'text/html');
+    }
+    return doc;
+  },
+
+  // Extract all image-like URLs from parsed XHTML: <img>, <image>, <object>
+  extractImageUrls(xhtml) {
+    const doc = this.parseXhtml(xhtml);
+    const urls = [];
+    const seen = new Set();
+
+    function add(src) {
+      if (src && !seen.has(src)) {
+        seen.add(src);
+        urls.push(src);
+      }
+    }
+
+    // <img src="...">
+    doc.querySelectorAll('img[src]').forEach(el => add(el.getAttribute('src')));
+
+    // <image href="..."> or <image xlink:href="..."> (SVG)
+    doc.querySelectorAll('image').forEach(el => {
+      add(el.getAttribute('href'));
+      add(el.getAttributeNS('http://www.w3.org/1999/xlink', 'href'));
+    });
+
+    // <object data="..."> (embedded content)
+    doc.querySelectorAll('object[data]').forEach(el => {
+      const data = el.getAttribute('data');
+      if (data && data.match(/\.(png|jpe?g|gif|svg|webp)(\?|#|$)/i)) {
+        add(data);
+      }
+    });
+
+    return urls;
+  },
+
+  // Extract url(...) references from CSS text
+  extractCssImageUrls(cssText) {
+    const urls = [];
+    const seen = new Set();
+    const regex = /url\(\s*['"]?([^'")]+?)['"]?\s*\)/g;
+    let match;
+    while ((match = regex.exec(cssText)) !== null) {
+      const url = match[1].trim();
+      // Skip data URIs and fragment-only refs
+      if (url.startsWith('data:') || url.startsWith('#')) continue;
+      if (!seen.has(url)) {
+        seen.add(url);
+        urls.push(url);
+      }
+    }
+    return urls;
+  },
+
+  // Strip query parameters and hash fragments from a path
+  stripQueryAndHash(path) {
+    return path.split('?')[0].split('#')[0];
   },
 };

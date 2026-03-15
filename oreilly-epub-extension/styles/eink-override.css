@@ -2,8 +2,25 @@
 body {
   font-family: Georgia, "Times New Roman", serif;
   line-height: 1.7;
-  margin: 1.5em;
+  margin: 1.5em !important;
+  padding: 0.5em 1em !important;
   color: #000;
+}
+
+/* Ensure content sections also respect margins */
+div, section, article, main {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Prevent images from overflowing with margins */
+img, svg, figure {
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+figure {
+  margin: 1em 0 !important;
 }
 
 pre, code {
@@ -13,7 +30,7 @@ pre, code {
   line-height: 1.5;
 }
 
-pre { padding: 0.8em; white-space: pre-wrap; word-wrap: break-word; }
+pre { padding: 0.8em; white-space: pre-wrap; word-wrap: break-word; max-width: 100%; overflow-x: hidden; }
 code { padding: 0.1em 0.3em; }
 
 /* Reset all syntax colors */

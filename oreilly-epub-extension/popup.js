@@ -13,11 +13,22 @@
     if (stateEls[name]) stateEls[name].style.display = 'block';
   }
 
+  // Progress covers two phases: images (0-30%) and chapters (30-100%)
   function updateProgress(p) {
-    const pct = p.totalChapters > 0 ? Math.round((p.chapter / p.totalChapters) * 100) : 0;
+    const imgPct = p.totalImages > 0 ? (p.images || 0) / p.totalImages : 1;
+    const chPct = p.totalChapters > 0 ? (p.chapter || 0) / p.totalChapters : 0;
+    const pct = Math.round(imgPct * 30 + chPct * 70);
+
     document.getElementById('progress-fill').style.width = `${pct}%`;
-    document.getElementById('progress-text').textContent =
-      `Chapter ${p.chapter}/${p.totalChapters} · Images: ${p.images || 0}/${p.totalImages || 0}`;
+
+    let label;
+    if ((p.chapter || 0) === 0 && p.totalImages > 0) {
+      label = `Images: ${p.images || 0}/${p.totalImages}`;
+    } else {
+      label = `Chapter ${p.chapter}/${p.totalChapters}`;
+      if (p.totalImages > 0) label += ` · Images: ${p.images || 0}/${p.totalImages}`;
+    }
+    document.getElementById('progress-text').textContent = label;
   }
 
   chrome.runtime.sendMessage({ action: 'getState' }, (state) => {
