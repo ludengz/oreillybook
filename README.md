@@ -19,7 +19,7 @@ A Chrome extension that converts O'Reilly Learning books into EPUB format with a
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/Silencewind/oreillybook.git
+   git clone https://github.com/ludengz/oreillybook.git
    ```
 2. Open Chrome and navigate to `chrome://extensions/`
 3. Enable **Developer mode** (toggle in the top-right corner)
