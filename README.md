@@ -33,6 +33,13 @@ A Chrome extension that converts O'Reilly Learning books into EPUB format with a
 4. The extension fetches all chapters, images, and stylesheets, then packages them into an EPUB file
 5. The EPUB file downloads automatically when complete
 
+## Popup States
+
+| Not on O'Reilly | Book Detected | Downloading | Error |
+|:---:|:---:|:---:|:---:|
+| ![Not on O'Reilly](docs/images/state-not-oreilly.png) | ![Ready](docs/images/state-ready.png) | ![Downloading](docs/images/state-downloading.png) | ![Error](docs/images/state-error.png) |
+| Navigate to an O'Reilly book page | Shows title & author, ready to download | Progress bar with chapter/image counts | Session expired or fetch failure |
+
 ## How It Works
 
 - **Content script** runs on `learning.oreilly.com`, fetching book content via same-origin API calls (session cookies are included automatically)
