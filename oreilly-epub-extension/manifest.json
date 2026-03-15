@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "O'Reilly EPUB Exporter",
+  "version": "1.0.0",
+  "description": "One-click O'Reilly book to EPUB conversion for e-ink readers",
+  "permissions": ["activeTab", "notifications"],
+  "host_permissions": ["https://learning.oreilly.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [{
+    "matches": [
+      "https://learning.oreilly.com/library/view/*",
+      "https://learning.oreilly.com/library/cover/*"
+    ],
+    "js": [
+      "lib/jszip.min.js",
+      "lib/epub-builder.js",
+      "lib/fetcher.js",
+      "lib/eink-optimizer.js",
+      "content.js"
+    ]
+  }],
+  "web_accessible_resources": [{
+    "resources": ["styles/eink-override.css"],
+    "matches": ["https://learning.oreilly.com/*"]
+  }]
+}
