@@ -49,7 +49,7 @@ describe('EpubBuilder.generateOpf', function() {
 
   it('includes dc:identifier with ISBN', function() {
     const opf = EpubBuilder.generateOpf(metadata, chapters, images, cssFiles);
-    assertContains(opf, '<dc:identifier>urn:isbn:9781234567890</dc:identifier>');
+    assertContains(opf, '<dc:identifier id="bookid">urn:isbn:9781234567890</dc:identifier>');
   });
   it('includes dc:title', function() {
     const opf = EpubBuilder.generateOpf(metadata, chapters, images, cssFiles);

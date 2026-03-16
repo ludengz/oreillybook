@@ -37,4 +37,23 @@ describe('EinkOptimizer.processChapter', function() {
     const result = EinkOptimizer.processChapter(xhtml, { 'img/a&b.png': 'ab.png' });
     assertContains(result, '../Images/ab.png');
   });
+
+  it('removes OReilly reader-specific wrapper divs', function() {
+    const xhtml = '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><div class="readable-text intended-text">Duplicate content</div><p>Original content</p></body></html>';
+    const result = EinkOptimizer.processChapter(xhtml, {});
+    assert(!result.includes('Duplicate content'), 'duplicate content wrapper should be removed');
+    assertContains(result, 'Original content');
+  });
+
+  it('produces valid XHTML without duplicate html tags and includes xmlns', function() {
+    const html = '<!DOCTYPE html><html><head><title>T</title></head><body><p>Text</p></body></html>';
+    const result = EinkOptimizer.processChapter(html, {});
+    assertContains(result, '<?xml version="1.0"');
+    assertContains(result, '<!DOCTYPE html>');
+    assertContains(result, 'xmlns="http://www.w3.org/1999/xhtml"');
+
+    // It should not have <html> wrapped inside another <html>
+    const matchCount = (result.match(/<html/gi) || []).length;
+    assert(matchCount === 1, `Expected exactly 1 <html tag, found ${matchCount}`);
+  });
 });

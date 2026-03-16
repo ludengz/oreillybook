@@ -53,16 +53,28 @@ const EinkOptimizer = {
   processChapter(xhtml, imageMap) {
     const doc = Fetcher.parseXhtml(xhtml);
 
+    // Remove O'Reilly reader-specific wrapper divs
+    doc.querySelectorAll('div.readable-text.intended-text').forEach(el => el.remove());
+
     this.rewriteCssLinks(doc);
     this.rewriteImagePaths(doc, imageMap);
     this.injectOverrideCss(doc);
 
+    if (!doc.documentElement.getAttribute('xmlns')) {
+      doc.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    }
+
     const serializer = new XMLSerializer();
-    let result = serializer.serializeToString(doc);
+    let result = serializer.serializeToString(doc.documentElement);
 
     // Ensure XML declaration is present
     if (!result.startsWith('<?xml')) {
-      result = '<?xml version="1.0" encoding="UTF-8"?>\n' + result;
+      result = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n' + result;
+    } else {
+      // If it has XML declaration, make sure it has DOCTYPE
+      if (!result.includes('<!DOCTYPE html>')) {
+        result = result.replace(/^<\?xml[^>]+>\s*/i, '$&\n<!DOCTYPE html>\n');
+      }
     }
     return result;
   },
