@@ -34,6 +34,18 @@
     <button id="btn-cancel" class="btn-secondary">Cancel</button>
   </div>
 
+  <div id="state-downloading-other" class="state" style="display:none;">
+    <div class="book-info">
+      <div id="book-title-other" class="book-title"></div>
+      <div id="book-authors-other" class="book-authors"></div>
+    </div>
+    <div class="notice">
+      <div class="notice-text">Another book is currently downloading:</div>
+      <div id="downloading-other-title" class="book-title-small"></div>
+    </div>
+    <button class="btn-primary" disabled>📥 Download EPUB</button>
+  </div>
+
   <div id="state-error" class="state" style="display:none;">
     <div class="notice error">
       <div class="notice-text" id="error-text"></div>
