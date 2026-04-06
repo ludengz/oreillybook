@@ -5,8 +5,11 @@
     notOreilly: document.getElementById('state-not-oreilly'),
     ready: document.getElementById('state-ready'),
     downloading: document.getElementById('state-downloading'),
+    downloadingOther: document.getElementById('state-downloading-other'),
     error: document.getElementById('state-error'),
   };
+
+  let activeTabId = null;
 
   function showState(name) {
     Object.values(stateEls).forEach(el => el.style.display = 'none');
@@ -31,15 +34,24 @@
     document.getElementById('progress-text').textContent = label;
   }
 
-  chrome.runtime.sendMessage({ action: 'getState' }, (state) => {
+  function handleState(state) {
     if (!state || !state.bookInfo) {
       showState('notOreilly');
       return;
     }
-    if (state.status === 'downloading' && state.progress) {
+
+    const isDownloadingThisTab = state.downloadingTabId === activeTabId;
+
+    if (state.status === 'downloading' && isDownloadingThisTab && state.progress) {
       showState('downloading');
       updateProgress(state.progress);
-    } else if (state.status === 'error') {
+    } else if (state.status === 'downloading' && !isDownloadingThisTab) {
+      showState('downloadingOther');
+      document.getElementById('book-title-other').textContent = state.bookInfo.title;
+      document.getElementById('book-authors-other').textContent = state.bookInfo.authors.join(', ');
+      document.getElementById('downloading-other-title').textContent =
+        state.downloadingBookInfo ? state.downloadingBookInfo.title : 'Unknown';
+    } else if (state.status === 'error' && isDownloadingThisTab) {
       showState('error');
       document.getElementById('error-text').textContent = state.error || 'Unknown error';
     } else {
@@ -47,17 +59,27 @@
       document.getElementById('book-title').textContent = state.bookInfo.title;
       document.getElementById('book-authors').textContent = state.bookInfo.authors.join(', ');
     }
+  }
+
+  // Query active tab, then fetch state for that tab
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (!tab) {
+      showState('notOreilly');
+      return;
+    }
+    activeTabId = tab.id;
+    chrome.runtime.sendMessage({ action: 'getState', tabId: activeTabId }, handleState);
   });
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'progressUpdate') {
-      showState('downloading');
-      updateProgress(message);
-    } else if (message.action === 'downloadComplete') {
-      showState('ready');
-    } else if (message.action === 'downloadError') {
-      showState('error');
-      document.getElementById('error-text').textContent = message.error;
+      if (message.tabId === activeTabId) {
+        showState('downloading');
+        updateProgress(message);
+      }
+    } else if (message.action === 'downloadComplete' || message.action === 'downloadError') {
+      // Re-query full state to correctly transition between states
+      chrome.runtime.sendMessage({ action: 'getState', tabId: activeTabId }, handleState);
     }
   });
 
@@ -65,11 +87,11 @@
     showState('downloading');
     document.getElementById('progress-fill').style.width = '0%';
     document.getElementById('progress-text').textContent = 'Starting...';
-    chrome.runtime.sendMessage({ action: 'startDownload' });
+    chrome.runtime.sendMessage({ action: 'startDownload', tabId: activeTabId });
   });
 
   document.getElementById('btn-cancel').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'cancelDownload' });
+    chrome.runtime.sendMessage({ action: 'cancelDownload', tabId: activeTabId });
     showState('ready');
   });
 
@@ -77,6 +99,6 @@
     showState('downloading');
     document.getElementById('progress-fill').style.width = '0%';
     document.getElementById('progress-text').textContent = 'Retrying...';
-    chrome.runtime.sendMessage({ action: 'startDownload' });
+    chrome.runtime.sendMessage({ action: 'startDownload', tabId: activeTabId });
   });
 })();

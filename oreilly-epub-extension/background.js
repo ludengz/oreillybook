@@ -3,10 +3,10 @@
 
 const DEFAULT_STATE = {
   status: 'idle', // idle | downloading | complete | error
-  bookInfo: null,
   progress: null,
   error: null,
-  tabId: null,
+  downloadingTabId: null,
+  bookInfoByTab: {},
 };
 
 async function getState() {
@@ -21,44 +21,82 @@ async function setState(updates) {
   return next;
 }
 
+async function setTabBookInfo(tabId, bookInfo) {
+  if (tabId == null) return;
+  const state = await getState();
+  const bookInfoByTab = { ...state.bookInfoByTab, [tabId]: bookInfo };
+  await chrome.storage.session.set({ state: { ...state, bookInfoByTab } });
+}
+
+async function removeTabBookInfo(tabId) {
+  const state = await getState();
+  const bookInfoByTab = { ...state.bookInfoByTab };
+  delete bookInfoByTab[tabId];
+  const updates = { bookInfoByTab };
+  if (state.downloadingTabId === tabId) {
+    updates.status = 'idle';
+    updates.progress = null;
+    updates.error = null;
+    updates.downloadingTabId = null;
+    chrome.action.setBadgeText({ text: '' });
+  }
+  await chrome.storage.session.set({ state: { ...state, ...updates } });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Wrap async handler so sendResponse works
   (async () => {
     switch (message.action) {
-      case 'getState':
-        sendResponse(await getState());
+      case 'getState': {
+        const st = await getState();
+        const tabId = message.tabId;
+        sendResponse({
+          status: st.status,
+          progress: st.progress,
+          error: st.error,
+          downloadingTabId: st.downloadingTabId,
+          bookInfo: tabId ? (st.bookInfoByTab[tabId] || null) : null,
+          downloadingBookInfo: st.downloadingTabId
+            ? (st.bookInfoByTab[st.downloadingTabId] || null)
+            : null,
+        });
         return;
+      }
 
       case 'startDownload': {
         const st = await getState();
-        if (st.tabId) {
-          chrome.tabs.sendMessage(st.tabId, { action: 'startDownload' });
+        if (st.status === 'downloading') {
+          sendResponse({ ok: false, reason: 'already_downloading' });
+          return;
         }
+        const targetTabId = message.tabId;
+        if (targetTabId) {
+          await setState({ downloadingTabId: targetTabId, status: 'downloading' });
+          chrome.tabs.sendMessage(targetTabId, { action: 'startDownload' });
+        }
+        sendResponse({ ok: true });
         return;
       }
 
       case 'cancelDownload': {
         const st = await getState();
-        if (st.tabId) {
-          chrome.tabs.sendMessage(st.tabId, { action: 'cancelDownload' });
+        if (st.downloadingTabId) {
+          chrome.tabs.sendMessage(st.downloadingTabId, { action: 'cancelDownload' });
         }
-        await setState({ status: 'idle', progress: null });
+        await setState({ status: 'idle', progress: null, error: null, downloadingTabId: null });
         chrome.action.setBadgeText({ text: '' });
         return;
       }
 
       case 'bookDetected':
-        await setState({
-          tabId: sender.tab?.id || null,
-          bookInfo: message.bookInfo,
-          status: 'idle',
-          progress: null,
-          error: null,
-        });
+        if (sender.tab?.id != null) {
+          await setTabBookInfo(sender.tab.id, message.bookInfo);
+        }
         sendResponse({ ok: true });
         return;
 
       case 'progress': {
+        const st = await getState();
         const progress = {
           chapter: message.chapter,
           totalChapters: message.totalChapters,
@@ -72,28 +110,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.action.setBadgeBackgroundColor({ color: '#2563eb' });
         chrome.runtime.sendMessage({
           action: 'progressUpdate',
+          tabId: st.downloadingTabId,
           ...progress,
         }).catch(() => {});
         return;
       }
 
-      case 'downloadComplete':
-        await setState({ status: 'complete' });
+      case 'downloadComplete': {
+        const st = await getState();
+        const completedTabId = st.downloadingTabId;
+        await setState({ status: 'complete', downloadingTabId: null });
         chrome.action.setBadgeText({ text: '✓' });
         chrome.action.setBadgeBackgroundColor({ color: '#16a34a' });
-        chrome.runtime.sendMessage({ action: 'downloadComplete' }).catch(() => {});
+        chrome.runtime.sendMessage({
+          action: 'downloadComplete',
+          tabId: completedTabId,
+        }).catch(() => {});
         setTimeout(async () => {
           chrome.action.setBadgeText({ text: '' });
           await setState({ status: 'idle' });
         }, 5000);
         return;
+      }
 
-      case 'downloadError':
+      case 'downloadError': {
+        const st = await getState();
         await setState({ status: 'error', error: message.error });
         chrome.action.setBadgeText({ text: '!' });
         chrome.action.setBadgeBackgroundColor({ color: '#dc2626' });
         chrome.runtime.sendMessage({
           action: 'downloadError',
+          tabId: st.downloadingTabId,
           error: message.error,
         }).catch(() => {});
         if (message.error && message.error.includes('Session expired')) {
@@ -105,6 +152,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         }
         return;
+      }
 
       case 'fetchImage': {
         // CORS proxy: fetch image from SW context (bypasses content script CORS)
@@ -127,4 +175,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   })();
   return true; // Keep message channel open for async response
+});
+
+// Clean up per-tab state when a tab is closed (R5, R6)
+chrome.tabs.onRemoved.addListener((tabId) => {
+  removeTabBookInfo(tabId);
 });
