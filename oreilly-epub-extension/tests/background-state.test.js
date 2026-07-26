@@ -355,6 +355,114 @@ describe('background.js terminal notifications', function() {
   });
 });
 
+describe('background.js bookDetected report invalidation', function() {
+  const sender = (tabId) => ({ tab: { id: tabId } });
+  const oldBook = { isbn: '111', title: 'Old Book', authors: ['A'] };
+  const newBook = { isbn: '222', title: 'New Book', authors: ['B'] };
+  const stateWithReport = (overrides = {}) => ({
+    status: 'complete', progress: null, error: null, downloadingTabId: null,
+    attemptId: null, bookInfoByTab: { 5: oldBook },
+    reportByTab: { 5: { isbn: '111', bookTitle: 'Old Book', outcome: 'complete', counts: {} } },
+    ...overrides,
+  });
+
+  it('clears the tab\'s report and residual complete status when a different book is detected', async function() {
+    ChromeMock.resetStorage({ state: stateWithReport() });
+    ChromeMock.clearBadgeEvents();
+    await ChromeMock.dispatchTo(BACKGROUND_LISTENER,
+      { action: 'bookDetected', bookInfo: newBook }, sender(5));
+    const state = ChromeMock.getStorage().state;
+    assert(!state.reportByTab[5], 'a report for the old book must not outlive navigation');
+    assertEqual(state.status, 'idle', 'residual complete must reset to idle');
+    assertEqual(state.bookInfoByTab[5].isbn, '222', 'new book info must be stored');
+    assert(ChromeMock.badgeEvents.some(e => e.kind === 'text' && e.text === '' && e.tabId === 5),
+      'the stale badge must be cleared');
+  });
+
+  it('keeps the report when the same book is re-detected (same-book reload)', async function() {
+    ChromeMock.resetStorage({ state: stateWithReport() });
+    await ChromeMock.dispatchTo(BACKGROUND_LISTENER,
+      { action: 'bookDetected', bookInfo: oldBook }, sender(5));
+    const state = ChromeMock.getStorage().state;
+    assert(state.reportByTab[5], 'same-book reload must keep the report');
+    assertEqual(state.status, 'complete');
+  });
+
+  it('resets an error state scoped to the navigating tab', async function() {
+    ChromeMock.resetStorage({ state: stateWithReport({
+      status: 'error', error: 'boom', downloadingTabId: 5,
+      reportByTab: { 5: { isbn: '111', outcome: 'error', counts: {} } },
+    }) });
+    await ChromeMock.dispatchTo(BACKGROUND_LISTENER,
+      { action: 'bookDetected', bookInfo: newBook }, sender(5));
+    const state = ChromeMock.getStorage().state;
+    assert(!state.reportByTab[5], 'stale partial report must be cleared');
+    assertEqual(state.status, 'idle');
+    assertEqual(state.error, null);
+    assertEqual(state.downloadingTabId, null);
+  });
+
+  it('does not disturb a download running on another tab', async function() {
+    ChromeMock.resetStorage({ state: stateWithReport({
+      status: 'downloading', downloadingTabId: 9, attemptId: 'a1',
+    }) });
+    await ChromeMock.dispatchTo(BACKGROUND_LISTENER,
+      { action: 'bookDetected', bookInfo: newBook }, sender(5));
+    const state = ChromeMock.getStorage().state;
+    assert(!state.reportByTab[5], 'stale report still clears');
+    assertEqual(state.status, 'downloading', 'another tab\'s download is untouched');
+    assertEqual(state.downloadingTabId, 9);
+    assertEqual(state.attemptId, 'a1');
+  });
+
+  it('keeps an error state belonging to another tab', async function() {
+    ChromeMock.resetStorage({ state: stateWithReport({
+      status: 'error', error: 'boom', downloadingTabId: 9,
+    }) });
+    await ChromeMock.dispatchTo(BACKGROUND_LISTENER,
+      { action: 'bookDetected', bookInfo: newBook }, sender(5));
+    const state = ChromeMock.getStorage().state;
+    assert(!state.reportByTab[5], 'stale report still clears');
+    assertEqual(state.status, 'error', 'another tab\'s error panel is untouched');
+    assertEqual(state.downloadingTabId, 9);
+  });
+
+  it('records book info for tabs without a report', async function() {
+    ChromeMock.resetStorage();
+    await ChromeMock.dispatchTo(BACKGROUND_LISTENER,
+      { action: 'bookDetected', bookInfo: newBook }, sender(5));
+    const state = ChromeMock.getStorage().state;
+    assertEqual(state.bookInfoByTab[5].isbn, '222');
+    assert(!state.reportByTab[5], 'no report may appear out of nowhere');
+  });
+});
+
+describe('background.js SPA navigation re-detection', function() {
+  it('asks the content script to re-detect on URL change', async function() {
+    let sent = null;
+    ChromeMock.setTabsSendMessage(async (id, msg) => { sent = { id, msg }; });
+    try {
+      await ChromeMock.fireTabUpdated(5, { url: 'https://learning.oreilly.com/library/view/x/222/' });
+      assert(sent && sent.msg && sent.msg.action === 'redetectBook',
+        'a URL change must trigger redetectBook');
+      assertEqual(sent.id, 5);
+    } finally {
+      ChromeMock.setTabsSendMessage(async () => undefined);
+    }
+  });
+
+  it('ignores tab updates without a URL change', async function() {
+    let sent = null;
+    ChromeMock.setTabsSendMessage(async (id, msg) => { sent = { id, msg }; });
+    try {
+      await ChromeMock.fireTabUpdated(5, { status: 'loading' });
+      assertEqual(sent, null, 'non-URL updates must not trigger re-detection');
+    } finally {
+      ChromeMock.setTabsSendMessage(async () => undefined);
+    }
+  });
+});
+
 describe('background.js fetchImage proxy', function() {
   async function withPatchedFetch(impl, body) {
     const orig = window.fetch;

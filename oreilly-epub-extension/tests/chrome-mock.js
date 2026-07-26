@@ -11,6 +11,7 @@
   const sentMessages = [];
   const badgeEvents = [];
   const tabRemovedListeners = [];
+  const tabUpdatedListeners = [];
   const notificationEvents = [];
   const notificationClickListeners = [];
   const notificationClosedListeners = [];
@@ -51,6 +52,7 @@
     },
     tabs: {
       onRemoved: { addListener(fn) { tabRemovedListeners.push(fn); } },
+      onUpdated: { addListener(fn) { tabUpdatedListeners.push(fn); } },
       sendMessage(tabId, message) { return tabsSendMessageImpl(tabId, message); },
       get(tabId) { return tabsGetImpl(tabId); },
       update(tabId, props) { focusEvents.push({ kind: 'tab', tabId, ...props }); return Promise.resolve(); },
@@ -92,6 +94,10 @@
     // Fire chrome.tabs.onRemoved listeners; resolves after all handlers settle
     async fireTabRemoved(tabId) {
       await Promise.all(tabRemovedListeners.map(fn => Promise.resolve(fn(tabId))));
+    },
+    // Fire chrome.tabs.onUpdated listeners (e.g. SPA route changes)
+    async fireTabUpdated(tabId, changeInfo) {
+      await Promise.all(tabUpdatedListeners.map(fn => Promise.resolve(fn(tabId, changeInfo, { id: tabId }))));
     },
     notificationEvents,
     clearNotificationEvents() { notificationEvents.length = 0; },
