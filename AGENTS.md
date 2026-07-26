@@ -1,5 +1,38 @@
 # AGENTS.md
 
+## Communication
+
+- Always reply in Chinese (中文).
+- When generating code and code comments, use English.
+
+## Project Overview
+
+Chrome extension (Manifest V3) that converts O'Reilly Learning books to EPUB 3.0 format, optimized for e-ink readers. Runs entirely in the browser using the user's existing O'Reilly session — no backend server.
+
+## Tech Stack
+
+- Language: Vanilla JavaScript (no TypeScript, no build step)
+- Framework: None — plain Chrome Extension APIs (Manifest V3)
+- Testing: Custom browser-based test runner (`tests/test-runner.html`)
+- Packaging: JSZip for EPUB assembly
+
+## Code Conventions
+
+- All extension code wrapped in IIFEs
+- Library modules use global object pattern (e.g., `const Fetcher = { ... }`)
+- No ES module imports — load order matters in `manifest.json`
+- Comments and code in English
+
+## Testing Requirements
+
+- Tests run in browser via `test-runner.html`, not Node.js
+- Test files in `tests/*.test.js`
+
+## Build & Deploy
+
+- No build step — load unpacked in `chrome://extensions/`
+- Start test server: `python -m http.server 8765`
+
 ## Review guidelines
 
 - Treat changes that expose authentication or session data, broaden extension host permissions, or transmit user data to new third parties as P1.
