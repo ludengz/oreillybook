@@ -55,8 +55,28 @@ async function setState(updates) {
 async function setTabBookInfo(tabId, bookInfo) {
   if (tabId == null) return;
   const state = await getState();
-  const bookInfoByTab = { ...state.bookInfoByTab, [tabId]: bookInfo };
-  await chrome.storage.session.set({ state: { ...state, bookInfoByTab } });
+  const updates = { bookInfoByTab: { ...state.bookInfoByTab, [tabId]: bookInfo } };
+  // A different book in the same tab invalidates that tab's stored report:
+  // the report panel outranks the ready state in the popup, so a stale
+  // report would hide the new book behind the old book's re-download view.
+  // Same-book reloads keep the report (ISBN match). Terminal statuses bound
+  // to this tab describe the old book and reset with it; a download or an
+  // error panel belonging to ANOTHER tab is untouched.
+  const report = (state.reportByTab || {})[tabId];
+  if (report && report.isbn && bookInfo && bookInfo.isbn && report.isbn !== bookInfo.isbn) {
+    const reportByTab = { ...state.reportByTab };
+    delete reportByTab[tabId];
+    updates.reportByTab = reportByTab;
+    chrome.action.setBadgeText({ text: '', tabId });
+    if (state.status === 'complete' && state.downloadingTabId == null) {
+      updates.status = 'idle';
+    } else if (state.status === 'error' && state.downloadingTabId === tabId) {
+      updates.status = 'idle';
+      updates.error = null;
+      updates.downloadingTabId = null;
+    }
+  }
+  await chrome.storage.session.set({ state: { ...state, ...updates } });
 }
 
 // --- Popup presence & system notifications ---------------------------------
@@ -387,4 +407,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Clean up per-tab state when a tab is closed (R5, R6)
 chrome.tabs.onRemoved.addListener((tabId) => {
   removeTabBookInfo(tabId);
+});
+
+// O'Reilly is a SPA: in-tab route changes (pushState) swap the book without
+// re-injecting the content script, so injection-time detection never runs.
+// Ask the live content script to re-detect on every URL change. On full
+// navigations the send rejects (no receiver yet) — injection-time detection
+// covers that path. changeInfo.url is only visible on host-permitted tabs,
+// which are exactly the tabs this extension runs on.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url) return;
+  chrome.tabs.sendMessage(tabId, { action: 'redetectBook' }).catch(() => {});
 });
